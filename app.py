@@ -2,6 +2,8 @@ import streamlit as st
 from langchain_ollama.llms import OllamaLLM
 from langchain_core.prompts import ChatPromptTemplate
 from vector import retriever
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
 
 # Set page config
 st.set_page_config(page_title="Pizza Restaurant Chatbot", page_icon="🍕")
@@ -22,7 +24,15 @@ def load_chain():
     Here is the question to answer: {question}
     """
     prompt = ChatPromptTemplate.from_template(template)
-    return prompt | model
+    
+    # Create a chain that first retrieves reviews, then passes them to the prompt and model
+    chain = (
+        {"reviews": retriever, "question": RunnablePassthrough()}
+        | prompt
+        | model
+        | StrOutputParser()
+    )
+    return chain
 
 chain = load_chain()
 
@@ -46,24 +56,24 @@ if question := st.chat_input("Ask a question about our pizza restaurant"):
     
     # Display assistant response
     with st.chat_message("assistant"):
+        message_placeholder = st.empty()
+        full_response = ""
         with st.spinner("Thinking..."):
-            # Get relevant reviews
-            reviews = retriever.invoke(question)
-            
             # Show reviews in an expander
             with st.expander("Relevant reviews used"):
+                reviews = retriever.invoke(question)
                 st.write(reviews)
             
-            # Generate response
-            response = chain.invoke({"reviews": reviews, "question": question})
-            
-            # Display response
-            st.markdown(response)
+            # Generate response with streaming
+            for chunk in chain.stream(question):
+                full_response += chunk
+                message_placeholder.markdown(full_response + "▌")
+            message_placeholder.markdown(full_response)
     
     # Add assistant response to chat history
-    st.session_state.messages.append({"role": "assistant", "content": response})
+    st.session_state.messages.append({"role": "assistant", "content": full_response})
 
 # Add a way to clear chat history
-# if st.button("Clear Chat History"):
-#     st.session_state.messages = []
-#     st.rerun() 
+if st.button("Clear Chat History"):
+    st.session_state.messages = []
+    st.rerun()
